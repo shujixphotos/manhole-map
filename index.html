@@ -6,15 +6,24 @@
   <title>Manhole Card Map</title>
 
   <style>
-    /* 画面いっぱいにGoogleマップを表示 */
     html, body {
       height: 100%;
       margin: 0;
       padding: 0;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }
     #map {
       height: 100%;
       width: 100%;
+    }
+    /* スマホでも押しやすいように infoWindow 内ボタン用 */
+    .mh-button {
+      padding: 4px 10px;
+      font-size: 13px;
+      border-radius: 4px;
+      border: 1px solid #888;
+      background: #fff;
+      cursor: pointer;
     }
   </style>
 </head>
@@ -23,21 +32,157 @@
   <div id="map"></div>
 
   <script>
-    function initMap() {
-      // 地図の中心（東京駅）
-      const center = { lat: 35.6812, lng: 139.7671 };
+    let map;
+    let infoWindow;
+    let collected = new Set(); // 取得済みIDのセット
 
-      // マップオブジェクトの作成
-      const map = new google.maps.Map(document.getElementById("map"), {
-        center: center,
-        zoom: 12,
+    // 文字列のエスケープ（XSS防止＆レイアウト崩れ防止）
+    function escapeHtml(str) {
+      if (!str) return "";
+      return str.replace(/[&<>"']/g, function (c) {
+        return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c] || c;
       });
+    }
+
+    function loadCollected() {
+      try {
+        const raw = localStorage.getItem("collectedManholes");
+        if (raw) {
+          const arr = JSON.parse(raw);
+          collected = new Set(arr);
+        }
+      } catch (e) {
+        console.warn("failed to load collected list", e);
+      }
+    }
+
+    function saveCollected() {
+      try {
+        localStorage.setItem("collectedManholes", JSON.stringify(Array.from(collected)));
+      } catch (e) {
+        console.warn("failed to save collected list", e);
+      }
+    }
+
+    function createMarkerIcon(isCollected) {
+      return {
+        path: google.maps.SymbolPath.CIRCLE,
+        scale: 8,
+        fillColor: isCollected ? "#888888" : "#ff5722", // 取得済みはグレー、未取得はオレンジ
+        fillOpacity: 1,
+        strokeColor: "#ffffff",
+        strokeWeight: 2
+      };
+    }
+
+    function addManholeMarker(card) {
+      const id = card.id;
+      const pos = { lat: card.lat, lng: card.lng };
+      const isCollected = collected.has(id);
+
+      const marker = new google.maps.Marker({
+        position: pos,
+        map,
+        title: card.name,
+        icon: createMarkerIcon(isCollected)
+      });
+
+      marker.addListener("click", () => {
+        const nowCollected = collected.has(id);
+        const buttonLabel = nowCollected ? "未取得に戻す" : "取得済みにする";
+
+        const contentHtml = `
+          <div style="min-width:230px;font-size:14px;">
+            <div style="font-weight:bold;margin-bottom:4px;">
+              ${escapeHtml(card.name)}
+            </div>
+            <div style="margin-bottom:4px;">
+              都道府県：${escapeHtml(card.pref || "")}<br/>
+              市区町村：${escapeHtml(card.city || "")}
+            </div>
+            <div style="margin-bottom:4px;">
+              配布場所：${escapeHtml(card.facility || "")}
+            </div>
+            <div style="margin-bottom:4px;">
+              営業時間：${escapeHtml(card.hours || "")}
+            </div>
+            <div style="margin-bottom:6px;">
+              ステータス：<strong>${nowCollected ? "取得済み" : "未取得"}</strong>
+            </div>
+            <button id="mh-toggle" class="mh-button">
+              ${buttonLabel}
+            </button>
+          </div>
+        `;
+
+        infoWindow.setContent(contentHtml);
+        infoWindow.open(map, marker);
+
+        // infoWindowのDOMが描画された後にボタンへイベントを付ける
+        google.maps.event.addListenerOnce(infoWindow, "domready", () => {
+          const btn = document.getElementById("mh-toggle");
+          if (!btn) return;
+          btn.addEventListener("click", () => {
+            const currentlyCollected = collected.has(id);
+            const newState = !currentlyCollected;
+
+            if (newState) {
+              collected.add(id);
+            } else {
+              collected.delete(id);
+            }
+            saveCollected();
+
+            // マーカー色更新
+            marker.setIcon(createMarkerIcon(newState));
+
+            // 再度 infoWindow を閉じる（好みで）
+            infoWindow.close();
+          });
+        });
+      });
+    }
+
+    function initMap() {
+      // 東京駅付近をデフォルト中心に
+      const center = { lat: 35.681236, lng: 139.767125 };
+
+      map = new google.maps.Map(document.getElementById("map"), {
+        center,
+        zoom: 9
+      });
+
+      infoWindow = new google.maps.InfoWindow();
+
+      loadCollected();
+
+      // 同じリポジトリ内の manholes.json からデータを読み込む
+      fetch("manholes.json")
+        .then((res) => {
+          if (!res.ok) {
+            throw new Error("HTTP error " + res.status);
+          }
+          return res.json();
+        })
+        .then((data) => {
+          if (!Array.isArray(data)) {
+            throw new Error("invalid manholes.json format");
+          }
+          data.forEach(addManholeMarker);
+        })
+        .catch((e) => {
+          console.error("failed to load manholes.json", e);
+          alert("マンホールカードのデータ読み込みに失敗しました。ファイル manholes.json を確認してください。");
+        });
     }
   </script>
 
-  <!-- ★ここにあなたのAPIキーを入れる！ -->
-  <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyAttP4YzMlt1rKykFqt3PlRc4HPDvk_Tb8&callback=initMap" 
-    async defer></script>
+  <!-- ★ここにあなたの API キーを入れる -->
+  <script
+    src="https://maps.googleapis.com/maps/api/js?key=AIzaSyAttP4YzMlt1rKykFqt3PlRc4HPDvk_Tb8&callback=initMap&loading=async"
+    async
+    defer
+  ></script>
 
 </body>
 </html>
