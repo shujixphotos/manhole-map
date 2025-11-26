@@ -16,7 +16,6 @@
       height: 100%;
       width: 100%;
     }
-    /* スマホでも押しやすいように infoWindow 内ボタン用 */
     .mh-button {
       padding: 4px 10px;
       font-size: 13px;
@@ -24,6 +23,9 @@
       border: 1px solid #888;
       background: #fff;
       cursor: pointer;
+    }
+    .mh-link {
+      font-size: 13px;
     }
   </style>
 </head>
@@ -34,9 +36,8 @@
   <script>
     let map;
     let infoWindow;
-    let collected = new Set(); // 取得済みIDのセット
+    let collected = new Set(); // 取得済みID
 
-    // 文字列のエスケープ（XSS防止＆レイアウト崩れ防止）
     function escapeHtml(str) {
       if (!str) return "";
       return str.replace(/[&<>"']/g, function (c) {
@@ -48,8 +49,7 @@
       try {
         const raw = localStorage.getItem("collectedManholes");
         if (raw) {
-          const arr = JSON.parse(raw);
-          collected = new Set(arr);
+          collected = new Set(JSON.parse(raw));
         }
       } catch (e) {
         console.warn("failed to load collected list", e);
@@ -68,7 +68,7 @@
       return {
         path: google.maps.SymbolPath.CIRCLE,
         scale: 8,
-        fillColor: isCollected ? "#888888" : "#ff5722", // 取得済みはグレー、未取得はオレンジ
+        fillColor: isCollected ? "#888888" : "#ff5722",
         fillOpacity: 1,
         strokeColor: "#ffffff",
         strokeWeight: 2
@@ -91,6 +91,17 @@
         const nowCollected = collected.has(id);
         const buttonLabel = nowCollected ? "未取得に戻す" : "取得済みにする";
 
+        // URL があるときだけリンクを表示
+        const linkHtml = card.url
+          ? `<div class="mh-link" style="margin-top:4px;">
+               <a href="${escapeHtml(card.url)}"
+                  target="_blank"
+                  rel="noopener noreferrer">
+                 公式ページを開く
+               </a>
+             </div>`
+          : "";
+
         const contentHtml = `
           <div style="min-width:230px;font-size:14px;">
             <div style="font-weight:bold;margin-bottom:4px;">
@@ -112,13 +123,13 @@
             <button id="mh-toggle" class="mh-button">
               ${buttonLabel}
             </button>
+            ${linkHtml}
           </div>
         `;
 
         infoWindow.setContent(contentHtml);
         infoWindow.open(map, marker);
 
-        // infoWindowのDOMが描画された後にボタンへイベントを付ける
         google.maps.event.addListenerOnce(infoWindow, "domready", () => {
           const btn = document.getElementById("mh-toggle");
           if (!btn) return;
@@ -132,11 +143,7 @@
               collected.delete(id);
             }
             saveCollected();
-
-            // マーカー色更新
             marker.setIcon(createMarkerIcon(newState));
-
-            // 再度 infoWindow を閉じる（好みで）
             infoWindow.close();
           });
         });
@@ -144,8 +151,7 @@
     }
 
     function initMap() {
-      // 東京駅付近をデフォルト中心に
-      const center = { lat: 35.681236, lng: 139.767125 };
+      const center = { lat: 35.681236, lng: 139.767125 }; // 東京駅
 
       map = new google.maps.Map(document.getElementById("map"), {
         center,
@@ -153,26 +159,20 @@
       });
 
       infoWindow = new google.maps.InfoWindow();
-
       loadCollected();
 
-      // 同じリポジトリ内の manholes.json からデータを読み込む
       fetch("manholes.json")
         .then((res) => {
-          if (!res.ok) {
-            throw new Error("HTTP error " + res.status);
-          }
+          if (!res.ok) throw new Error("HTTP error " + res.status);
           return res.json();
         })
         .then((data) => {
-          if (!Array.isArray(data)) {
-            throw new Error("invalid manholes.json format");
-          }
+          if (!Array.isArray(data)) throw new Error("invalid manholes.json format");
           data.forEach(addManholeMarker);
         })
         .catch((e) => {
           console.error("failed to load manholes.json", e);
-          alert("マンホールカードのデータ読み込みに失敗しました。ファイル manholes.json を確認してください。");
+          alert("マンホールカードのデータ読み込みに失敗しました。manholes.json を確認してください。");
         });
     }
   </script>
