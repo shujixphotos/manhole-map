@@ -1,0 +1,701 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>マンホールカード配布マップ</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@500;700;900&family=IBM+Plex+Mono:wght@500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --iron:#26282B;
+    --iron-2:#54585C;
+    --brass:#C9A227;
+    --stamp:#D9442F;
+    --got:#2F9E44;
+    --warn:#E8870C;
+    --paper:#F7F5F0;
+    --line:#E3DFD6;
+    --radius:18px;
+    --shadow:0 8px 30px rgba(38,40,43,.18);
+    --ease-spring:cubic-bezier(.32,1.4,.45,1);
+  }
+  *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{height:100%}
+  body{
+    font-family:"Zen Maru Gothic","Hiragino Maru Gothic ProN","Hiragino Sans",sans-serif;
+    color:var(--iron);background:var(--paper);overflow:hidden;
+  }
+
+  /* ── ヘッダー ───────────────────────── */
+  header{
+    position:fixed;inset:0 0 auto 0;z-index:1000;
+    display:flex;align-items:center;gap:12px;
+    padding:calc(10px + env(safe-area-inset-top)) 16px 10px;
+    background:linear-gradient(to bottom, rgba(247,245,240,.96) 60%, rgba(247,245,240,0));
+    pointer-events:none;
+  }
+  header > *{pointer-events:auto}
+  .logo{
+    display:flex;align-items:center;gap:10px;flex-shrink:0;
+    background:var(--iron);color:var(--paper);
+    padding:8px 14px 8px 8px;border-radius:999px;box-shadow:var(--shadow);
+  }
+  .logo .lid{
+    width:30px;height:30px;border-radius:50%;flex-shrink:0;
+    background:
+      radial-gradient(circle at 50% 50%, var(--brass) 0 18%, transparent 19%),
+      repeating-conic-gradient(var(--iron-2) 0 10deg, var(--iron) 10deg 20deg);
+    border:2px solid var(--brass);
+    animation:spin 24s linear infinite;
+  }
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .logo h1{font-size:14px;font-weight:900;letter-spacing:.04em;line-height:1.2}
+  .logo h1 small{display:block;font-size:9px;font-weight:500;color:var(--brass);letter-spacing:.18em}
+
+  .search{
+    flex:1;max-width:420px;display:flex;align-items:center;gap:8px;
+    background:#fff;border:1.5px solid var(--line);border-radius:999px;
+    padding:9px 16px;box-shadow:var(--shadow);
+    transition:border-color .25s, box-shadow .25s;
+  }
+  .search:focus-within{border-color:var(--brass);box-shadow:0 8px 30px rgba(201,162,39,.25)}
+  .search svg{flex-shrink:0;opacity:.45}
+  .search input{
+    border:none;outline:none;width:100%;font:inherit;font-size:14px;background:transparent;color:var(--iron);
+  }
+  .search input::placeholder{color:#9b968c}
+
+  /* ── 進捗 & フィルターバー ── */
+  .toolbar{
+    position:fixed;z-index:999;left:16px;right:16px;
+    top:calc(64px + env(safe-area-inset-top));
+    display:flex;align-items:center;gap:8px;flex-wrap:wrap;pointer-events:none;
+  }
+  .toolbar > *{pointer-events:auto}
+  .progress-chip{
+    display:flex;align-items:center;gap:8px;
+    background:#fff;border:1.5px solid var(--line);border-radius:999px;
+    padding:6px 12px;font-size:11px;font-weight:700;color:var(--iron-2);
+    box-shadow:var(--shadow);
+  }
+  .progress-chip b{color:var(--got);font-size:13px;font-family:"IBM Plex Mono",monospace}
+  .progress-chip .bar{
+    width:54px;height:6px;border-radius:3px;background:var(--line);overflow:hidden;
+  }
+  .progress-chip .bar i{
+    display:block;height:100%;width:0;background:var(--got);border-radius:3px;
+    transition:width .6s var(--ease-spring);
+  }
+  .filters{display:flex;gap:6px}
+  .fchip{
+    border:1.5px solid var(--line);background:#fff;color:var(--iron-2);
+    font:inherit;font-size:11px;font-weight:700;cursor:pointer;
+    padding:6px 12px;border-radius:999px;box-shadow:var(--shadow);
+    transition:all .25s var(--ease-spring);
+  }
+  .fchip.on{background:var(--iron);color:#fff;border-color:var(--iron);transform:scale(1.05)}
+  .fchip:disabled{opacity:.5;cursor:wait}
+  #refreshBtn .ico{display:inline-block;transition:transform .3s}
+  #refreshBtn.loading .ico{animation:spin 1s linear infinite}
+
+  /* ── 地図 ───────────────────────── */
+  #map{position:fixed;inset:0;background:#EAE8E1}
+  .leaflet-control-attribution{font-size:9px;background:rgba(255,255,255,.7)!important}
+  .leaflet-control-zoom{border:none!important;box-shadow:var(--shadow)!important;border-radius:12px!important;overflow:hidden}
+  .leaflet-control-zoom a{color:var(--iron)!important;border-color:var(--line)!important}
+  .leaflet-top.leaflet-left{top:calc(112px + env(safe-area-inset-top))}
+
+  /* ── マンホール型ピン ── */
+  .mh-pin{
+    width:34px;height:34px;border-radius:50%;cursor:pointer;position:relative;
+    background:
+      radial-gradient(circle at 50% 38%, rgba(255,255,255,.28) 0 22%, transparent 40%),
+      radial-gradient(circle at 50% 50%, var(--c,#C9A227) 0 26%, transparent 27%),
+      repeating-conic-gradient(#43474B 0 12deg, var(--iron) 12deg 24deg);
+    border:2.5px solid var(--c,#C9A227);
+    box-shadow:0 3px 10px rgba(0,0,0,.35), inset 0 -3px 5px rgba(0,0,0,.45);
+    transform-origin:50% 100%;
+    animation:drop .55s var(--ease-spring) backwards;
+    transition:transform .25s var(--ease-spring), opacity .3s, filter .3s;
+  }
+  .mh-pin::after{
+    content:"";position:absolute;inset:4px;border-radius:50%;
+    border:1.5px dotted rgba(255,255,255,.4);
+  }
+  .mh-pin:hover{transform:scale(1.22)}
+  @keyframes drop{
+    0%{transform:translateY(-26px) scale(.3);opacity:0}
+    60%{opacity:1}
+    100%{transform:translateY(0) scale(1)}
+  }
+  .mh-pin.active{transform:scale(1.3)}
+  .mh-pin.active::before{
+    content:"";position:absolute;inset:-9px;border-radius:50%;
+    border:2.5px solid var(--stamp);
+    animation:pulse 1.6s ease-out infinite;
+  }
+  @keyframes pulse{
+    0%{transform:scale(.7);opacity:1}
+    100%{transform:scale(1.5);opacity:0}
+  }
+  .mh-pin.collected{filter:grayscale(1);opacity:.45}
+  .mh-pin.collected.active{opacity:.8}
+  .pin-badge{
+    position:absolute;z-index:2;right:-7px;top:-7px;
+    width:18px;height:18px;border-radius:50%;
+    color:#fff;border:2px solid #fff;
+    display:flex;align-items:center;justify-content:center;
+    font-size:10px;font-weight:900;line-height:1;
+    opacity:0;transform:scale(.3) rotate(-90deg);
+    transition:all .4s var(--ease-spring);
+    filter:none;
+  }
+  .mh-pin.collected .badge-got{opacity:1;transform:scale(1) rotate(-12deg)}
+  .badge-got{background:var(--got)}
+  .badge-warn{background:var(--warn);opacity:1;transform:scale(1)}
+  .mh-pin.collected .badge-warn{display:none}
+  .pin-multi{
+    position:absolute;z-index:2;left:-7px;bottom:-5px;
+    background:var(--iron);color:#fff;border:1.5px solid #fff;
+    font-size:8.5px;font-weight:900;font-family:"IBM Plex Mono",monospace;
+    padding:1px 5px;border-radius:999px;line-height:1.3;
+  }
+
+  /* クラスター */
+  .mh-cluster{
+    display:flex;align-items:center;justify-content:center;
+    width:44px;height:44px;border-radius:50%;
+    background:repeating-conic-gradient(#43474B 0 12deg, var(--iron) 12deg 24deg);
+    border:3px solid var(--brass);
+    color:#fff;font-weight:900;font-size:14px;font-family:"IBM Plex Mono",monospace;
+    box-shadow:0 4px 14px rgba(0,0,0,.35), inset 0 -4px 6px rgba(0,0,0,.45);
+    text-shadow:0 1px 3px rgba(0,0,0,.7);
+    transition:transform .25s var(--ease-spring);
+  }
+  .mh-cluster:hover{transform:scale(1.12)}
+
+  /* 現在地マーカー */
+  .me-dot{
+    width:18px;height:18px;border-radius:50%;
+    background:#1971C2;border:3px solid #fff;
+    box-shadow:0 0 0 0 rgba(25,113,194,.45);
+    animation:me-pulse 2s ease-out infinite;
+  }
+  @keyframes me-pulse{
+    0%{box-shadow:0 0 0 0 rgba(25,113,194,.45)}
+    100%{box-shadow:0 0 0 18px rgba(25,113,194,0)}
+  }
+
+  /* ── 詳細シート ── */
+  .sheet{
+    position:fixed;z-index:1100;
+    background:#fff;border-radius:var(--radius);
+    box-shadow:0 -10px 40px rgba(38,40,43,.28);
+    display:flex;flex-direction:column;overflow:hidden;
+    transition:transform .45s var(--ease-spring), opacity .35s;
+  }
+  @media (max-width:767px){
+    .sheet{
+      left:10px;right:10px;bottom:0;max-height:68vh;
+      border-radius:var(--radius) var(--radius) 0 0;
+      transform:translateY(110%);
+      padding-bottom:env(safe-area-inset-bottom);
+    }
+    .sheet.open{transform:translateY(0)}
+  }
+  @media (min-width:768px){
+    .sheet{
+      top:120px;right:20px;width:370px;max-height:calc(100vh - 150px);
+      transform:translateX(120%);opacity:0;
+    }
+    .sheet.open{transform:translateX(0);opacity:1}
+  }
+  .sheet-grab{padding:10px 0 2px;display:flex;justify-content:center}
+  .sheet-grab span{width:40px;height:4px;border-radius:2px;background:var(--line)}
+  @media (min-width:768px){.sheet-grab{display:none}}
+
+  .sheet-body{overflow-y:auto;padding:6px 18px 18px;-webkit-overflow-scrolling:touch}
+
+  .card-head{
+    border:2.5px solid var(--c,var(--brass));border-radius:14px;overflow:hidden;
+    margin-top:8px;
+  }
+  .card-title{
+    background:var(--iron);color:#fff;padding:12px 14px;
+    display:flex;align-items:baseline;justify-content:space-between;gap:8px;
+  }
+  .card-title h2{font-size:17px;font-weight:900;letter-spacing:.02em}
+  .pref-badge{
+    flex-shrink:0;font-size:10px;font-weight:700;color:var(--iron);
+    background:var(--c,var(--brass));padding:3px 9px;border-radius:999px;
+  }
+  .status-banner{
+    display:flex;align-items:center;gap:6px;
+    background:#FFF4E0;color:#9A5B00;border:1.5px dashed var(--warn);
+    border-radius:10px;padding:8px 12px;margin-top:10px;
+    font-size:12px;font-weight:700;line-height:1.5;
+  }
+
+  .cards-list{margin-top:12px;display:flex;flex-direction:column;gap:8px}
+  .card-row{
+    display:flex;align-items:center;gap:10px;
+    border:1.5px solid var(--line);border-radius:12px;padding:10px 12px;
+    transition:background .3s, border-color .3s;
+  }
+  .card-row.got{background:#F0FAF2;border-color:var(--got)}
+  .card-row .mini-lid{
+    width:34px;height:34px;border-radius:50%;flex-shrink:0;position:relative;
+    background:
+      radial-gradient(circle at 50% 50%, var(--c,#C9A227) 0 26%, transparent 27%),
+      repeating-conic-gradient(#43474B 0 12deg, var(--iron) 12deg 24deg);
+    border:2px solid var(--c,#C9A227);
+    transition:filter .3s, opacity .3s;
+  }
+  .card-row.got .mini-lid{filter:grayscale(1);opacity:.5}
+  .card-row .card-meta{flex:1;min-width:0}
+  .card-row .card-meta .dan{font-size:12.5px;font-weight:900}
+  .card-row .card-meta .code{
+    font-family:"IBM Plex Mono",monospace;font-size:10.5px;color:var(--iron-2);
+  }
+  .get-btn{
+    flex-shrink:0;border:2px solid var(--got);background:#fff;color:var(--got);
+    font:inherit;font-size:11.5px;font-weight:900;cursor:pointer;
+    padding:7px 12px;border-radius:999px;
+    transition:all .25s var(--ease-spring);
+  }
+  .get-btn.on{background:var(--got);color:#fff;transform:rotate(-3deg) scale(1.05)}
+
+  dl.info{margin-top:14px;display:grid;grid-template-columns:auto 1fr;gap:8px 12px;font-size:13px}
+  dl.info dt{
+    font-size:10px;font-weight:700;color:var(--iron-2);letter-spacing:.1em;
+    background:var(--paper);border:1px solid var(--line);border-radius:6px;
+    padding:3px 8px;height:fit-content;white-space:nowrap;
+  }
+  dl.info dd{line-height:1.55}
+  dl.info dd .addr{display:block;font-size:11px;color:var(--iron-2);margin-top:2px}
+  .sub-place{
+    margin-top:10px;border-left:3px solid var(--line);padding:2px 0 2px 10px;
+    font-size:12px;line-height:1.6;color:var(--iron-2);
+  }
+  .sub-place b{color:var(--iron);font-size:12.5px}
+  .note{margin-top:12px;font-size:11.5px;line-height:1.7;color:var(--iron-2)}
+  .geo-note{
+    margin-top:12px;font-size:10.5px;color:#9b968c;line-height:1.6;
+    border-top:1px dashed var(--line);padding-top:8px;
+  }
+
+  .actions{display:flex;gap:10px;margin-top:14px}
+  .btn{
+    flex:1;display:flex;align-items:center;justify-content:center;gap:6px;
+    padding:11px;border-radius:12px;border:none;cursor:pointer;
+    font:inherit;font-size:13px;font-weight:700;text-decoration:none;
+    transition:transform .2s var(--ease-spring);
+  }
+  .btn:active{transform:scale(.96)}
+  .btn-primary{background:var(--iron);color:#fff}
+  .btn-ghost{background:var(--paper);border:1.5px solid var(--line);color:var(--iron)}
+
+  .sheet-close{
+    position:absolute;top:10px;right:10px;z-index:2;
+    width:30px;height:30px;border-radius:50%;border:none;cursor:pointer;
+    background:rgba(38,40,43,.55);color:#fff;font-size:15px;line-height:1;
+    backdrop-filter:blur(4px);
+  }
+
+  .toast{
+    position:fixed;z-index:1200;left:50%;bottom:calc(28px + env(safe-area-inset-bottom));
+    transform:translate(-50%,20px);opacity:0;pointer-events:none;
+    background:var(--iron);color:#fff;font-size:12.5px;font-weight:700;
+    padding:10px 18px;border-radius:999px;box-shadow:var(--shadow);
+    transition:transform .35s var(--ease-spring), opacity .3s;
+    max-width:88vw;text-align:center;line-height:1.5;
+  }
+  .toast.show{transform:translate(-50%,0);opacity:1}
+
+  @media (prefers-reduced-motion:reduce){
+    *{animation:none!important;transition:none!important}
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">
+    <div class="lid"></div>
+    <h1>マンホールカード<br>配布マップ<small>MANHOLE CARD MAP</small></h1>
+  </div>
+  <div class="search">
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+    <input id="q" type="search" placeholder="都市名・都道府県・弾(例: 27)で検索" autocomplete="off">
+  </div>
+</header>
+
+<div class="toolbar">
+  <div class="progress-chip">
+    取得 <b id="gotNum">0</b>/<span id="totalNum">0</span>
+    <span class="bar"><i id="progressBar"></i></span>
+  </div>
+  <div class="filters" role="tablist">
+    <button class="fchip on" data-f="all">すべて</button>
+    <button class="fchip" data-f="todo">未取得</button>
+    <button class="fchip" data-f="got">取得済</button>
+  </div>
+  <button class="fchip" id="refreshBtn" title="配布データを最新に更新します"><span class="ico">↻</span> データ更新</button>
+  <button class="fchip" id="locateBtn" title="現在地周辺の配布場所を探します">📍 現在地</button>
+</div>
+
+<div id="map"></div>
+
+<aside class="sheet" id="sheet" aria-hidden="true">
+  <button class="sheet-close" id="sheetClose" aria-label="閉じる">✕</button>
+  <div class="sheet-grab"><span></span></div>
+  <div class="sheet-body" id="sheetBody"></div>
+</aside>
+
+<div class="toast" id="toast"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/leaflet.markercluster.js"></script>
+<script>
+/* ==============================================================
+   ▼データ更新の仕組み
+   1. manhole-data.json をWeb上(GitHub Pages / Gist / 自サイト等)に置く
+   2. 下の DATA_URL にそのURLを設定する
+   3. 画面の「↻ データ更新」ボタンで最新JSONを取得して反映する
+      (取得したデータはブラウザに保存され、次回以降も使われます)
+   DATA_URL が空のままでも、HTML内蔵のデータで動作します。
+   ============================================================== */
+const DATA_URL = "./manhole-data.json"; // 同じ場所に置いた manhole-data.json を読む
+const AUTO_UPDATE_ON_LOAD = true;       // 起動時にも自動で最新データを取得する
+
+/* HTML内蔵データ(フォールバック)。manhole-data.json と同内容 */
+const BUNDLED_DATA = {"version":"2026-06-10","source":"GKP公式 第27弾・第28弾一覧 + 配布情報データベース(2026年6月10日時点)","spots":[{"id":"hokkaido-ebetsu","region":"北海道","pref":"北海道","city":"江別市","lat":43.09,"lng":141.575,"place":"江別市民活動センター・あい","address":"江別市東野幌本町6-43","hours":"平日 9:00〜21:00 / 土日祝 9:00〜18:00(年末年始休)","cards":[{"dan":28,"code":"B001"}]},{"id":"hokkaido-horonobe","region":"北海道","pref":"北海道","city":"幌延町","lat":45.0185,"lng":141.8528,"place":"ホロカル(幌延駅構内)","address":"天塩郡幌延町1条北1丁目28番地","hours":"9:00〜16:00(昼休み13:00〜13:50)","subPlaces":[{"label":"木曜日","place":"幌延町産業地域振興センター","address":"幌延町栄町5番地3","hours":"9:00〜16:00(昼休み12:00〜13:00)"}],"cards":[{"dan":28,"code":"A001"}]},{"id":"hokkaido-shintoku","region":"北海道","pref":"北海道","city":"新得町","lat":43.0747,"lng":142.8417,"place":"新得駅前地域交流センターとくとく 1F総合案内所","address":"上川郡新得町本通南1丁目21-22","hours":"9:00〜19:00","cards":[{"dan":28,"code":"B001"}]},{"id":"hokkaido-kamishihoro","region":"北海道","pref":"北海道","city":"上士幌町","lat":43.2315,"lng":143.2965,"place":"上士幌町役場 建設課","address":"河東郡上士幌町字上士幌東3線238番地","hours":"平日 8:45〜17:00","subPlaces":[{"label":"土日祝","place":"道の駅かみしほろ","address":"上士幌町字上士幌東3線227番地","hours":"9:00〜17:00(夏季は〜18:00)"}],"cards":[{"dan":27,"code":"A001"}]},{"id":"iwate-morioka","region":"東北","pref":"岩手県","city":"盛岡市","lat":39.7026,"lng":141.1505,"place":"もりおか歴史文化館","address":"盛岡市内丸1-50","hours":"4〜10月 9:00〜19:00 / 11〜3月 9:00〜18:00(第3火曜休)","cards":[{"dan":28,"code":"C001"}]},{"id":"iwate-miyako","region":"東北","pref":"岩手県","city":"宮古市","lat":39.633,"lng":141.875,"place":"ひきめの里直売所","address":"宮古市蟇目13-3-1","hours":"9:00〜16:00(火曜休)","cards":[{"dan":27,"code":"C001"}]},{"id":"iwate-rikuzentakata","region":"東北","pref":"岩手県","city":"陸前高田市","lat":39.008,"lng":141.629,"place":"陸前高田市総合交流センター(夢アリーナたかた)","address":"陸前高田市高田町字太田5番地","hours":"火〜土 9:00〜21:00 / 日 9:00〜17:00(月曜休)","cards":[{"dan":27,"code":"B001"}]},{"id":"miyagi-ishinomaki","region":"東北","pref":"宮城県","city":"石巻市","lat":38.4317,"lng":141.307,"place":"石ノ森萬画館","address":"石巻市中瀬2番7号","hours":"9:00〜17:00(火曜休 ※長期休み期間は除く)","cards":[{"dan":28,"code":"B001"}]},{"id":"miyagi-rifu","region":"東北","pref":"宮城県","city":"利府町","lat":38.332,"lng":140.976,"place":"利府町上下水道部上下水道課","address":"宮城郡利府町利府字新並松4番地","hours":"平日 8:30〜17:15 / 土日祝 9:00〜17:15(年末年始休)","cards":[{"dan":28,"code":"B001"}]},{"id":"miyagi-shichigahama","region":"東北","pref":"宮城県","city":"七ヶ浜町","lat":38.303,"lng":141.077,"place":"七ヶ浜国際村","address":"宮城郡七ヶ浜町花渕浜字大山1-1","hours":"10:00〜17:00(火曜休)","subPlaces":[{"label":"休館日","place":"七ヶ浜町上下水道事業所","address":"七ヶ浜町東宮浜字丑谷辺5-1","hours":"8:30〜17:15"}],"cards":[{"dan":27,"code":"B001"}]},{"id":"akita-katagami","region":"東北","pref":"秋田県","city":"潟上市","lat":39.876,"lng":139.965,"place":"てんのうグリーンマーケット(道の駅てんのう)","address":"潟上市天王字江川上谷地109-2","hours":"9:00〜17:00(年末年始休)","cards":[{"dan":27,"code":"A001"}]},{"id":"yamagata-yonezawa","region":"東北","pref":"山形県","city":"米沢市","lat":37.948,"lng":140.13,"place":"道の駅米沢","address":"米沢市川井1039-1","hours":"9:00〜18:00(年中無休)","cards":[{"dan":27,"code":"A001"}]},{"id":"fukushima-iwaki","region":"東北","pref":"福島県","city":"いわき市","lat":37.0653,"lng":140.8881,"place":"いわき市総合観光案内所(JRいわき駅)","address":"いわき市平田町38-16 いわき駅コンコース","hours":"10:00〜13:15、14:00〜18:00(12/31・1/1休)","cards":[{"dan":28,"code":"E001"}]},{"id":"fukushima-asakawa","region":"東北","pref":"福島県","city":"浅川町","lat":37.077,"lng":140.405,"place":"吉田富三記念館","address":"石川郡浅川町大字袖山字森下287番地","hours":"9:00〜16:30(月曜・第2第4日曜休)","status":"休止","statusNote":"現在配布休止中の情報があります。訪問前に浅川町の公式情報を確認してください。","cards":[{"dan":28,"code":"A001"}]},{"id":"ibaraki-ryuiki","region":"関東","pref":"茨城県","city":"茨城県(流域下水道)","lat":36.3387,"lng":140.5984,"place":"アクアワールド茨城県大洗水族館 入口チケット窓口","address":"東茨城郡大洗町磯浜町8252-3","hours":"9:00〜16:00(最終入場時間までの配布。季節変動あり)","cards":[{"dan":27,"code":"A001"}]},{"id":"ibaraki-tsuchiura","region":"関東","pref":"茨城県","city":"土浦市","lat":36.066,"lng":140.21,"place":"霞ケ浦文化体育会館","address":"土浦市大岩田1051番地","hours":"9:00〜17:00(月曜休)","cards":[{"dan":27,"code":"I001"}]},{"id":"ibaraki-mito","region":"関東","pref":"茨城県","city":"水戸市","lat":36.3795,"lng":140.4655,"place":"水戸芸術館","address":"水戸市五軒町1-6-8","hours":"10:30〜18:00(月曜休 ※祝日の場合は火曜)","cards":[{"dan":28,"code":"B001"}]},{"id":"ibaraki-chikusei","region":"関東","pref":"茨城県","city":"筑西市","lat":36.33,"lng":139.958,"place":"道の駅グランテラス筑西 総合案内所","address":"筑西市川澄1850","hours":"9:00〜18:00(第3水曜・1/1休)","cards":[{"dan":28,"code":"B001"}]},{"id":"tochigi-oyama","region":"関東","pref":"栃木県","city":"小山市","lat":36.3135,"lng":139.798,"place":"小山市まちの駅 思季彩館","address":"小山市中央町3-5-3","hours":"9:00〜17:00(水曜・年末年始休)","cards":[{"dan":28,"code":"B001"}]},{"id":"tochigi-otawara","region":"関東","pref":"栃木県","city":"大田原市","lat":36.857,"lng":140.118,"place":"大田原市観光交流センター","address":"大田原市黒羽田町848","hours":"9:00〜17:00(12/29〜1/3休)","cards":[{"dan":28,"code":"B001"}]},{"id":"tochigi-yaita","region":"関東","pref":"栃木県","city":"矢板市","lat":36.785,"lng":139.91,"place":"道の駅やいた","address":"矢板市矢板114番地1","hours":"8:30〜17:00(年末年始休)","status":"休止","statusNote":"現在配布休止中の情報があります。訪問前に矢板市の公式情報を確認してください。","cards":[{"dan":28,"code":"A001"}]},{"id":"gunma-numata","region":"関東","pref":"群馬県","city":"沼田市","lat":36.701,"lng":139.218,"place":"老神温泉観光協会","address":"沼田市利根町老神607-1","hours":"9:00〜12:00、13:00〜17:00","subPlaces":[{"label":"火曜日","place":"利根地区コミュニティセンター","address":"沼田市利根町追貝37","hours":"8:30〜17:00"}],"cards":[{"dan":28,"code":"B001"}]},{"id":"saitama-miyashiro","region":"関東","pref":"埼玉県","city":"宮代町","lat":36.0246,"lng":139.7215,"place":"無印良品 東武動物公園駅前","address":"南埼玉郡宮代町中央1丁目2-1","hours":"10:00〜21:00(営業時間はHP要確認)","status":"休止","statusNote":"現在配布休止中の情報があります。訪問前に宮代町の公式情報を確認してください。","cards":[{"dan":27,"code":"B001"}]},{"id":"chiba-shibayama","region":"関東","pref":"千葉県","city":"芝山町","lat":35.6927,"lng":140.414,"place":"芝山町役場 まちづくり課環境下水道係","address":"山武郡芝山町小池992","hours":"9:00〜17:00(年末年始休)","cards":[{"dan":27,"code":"A001"}]},{"id":"tokyo-23ku","region":"関東","pref":"東京都","city":"東京23区","lat":35.6953,"lng":139.752,"place":"千代田区観光案内所(千代田会館1階)","address":"千代田区九段南1-6-17","hours":"10:00〜18:00(第4日曜・年末年始休)","note":"配布開始直後は混雑対策としてWEB整理券制となる期間がありました。最新の配布方法は千代田区の公式情報を確認してください。","cards":[{"dan":28,"code":"O101"}]},{"id":"tokyo-musashino","region":"関東","pref":"東京都","city":"武蔵野市","lat":35.7045,"lng":139.58,"place":"サンロード吉祥寺まち案内所","address":"武蔵野市吉祥寺本町1-15-2","hours":"11:00〜18:00(12/31〜1/3休)","cards":[{"dan":27,"code":"C001"}]},{"id":"tokyo-kokubunji","region":"関東","pref":"東京都","city":"国分寺市","lat":35.6995,"lng":139.4665,"place":"国分寺市立いずみホール","address":"国分寺市泉町3-36-12","hours":"9:00〜17:00(第1・3月曜休)","cards":[{"dan":27,"code":"E001"}]},{"id":"tokyo-hinode","region":"関東","pref":"東京都","city":"日の出町","lat":35.7421,"lng":139.2596,"place":"日の出町役場","address":"西多摩郡日の出町平井2780番地","hours":"平日 8:30〜17:15(12:00〜13:00を除く)","subPlaces":[{"label":"休日","place":"日の出町観光協会","address":"日の出町大久野17-2","hours":"10:00〜16:00(12:00〜13:00を除く)"},{"label":"休日","place":"つるつる温泉センター","address":"日の出町大久野4718","hours":"10:00〜19:00(第3火曜休)"}],"cards":[{"dan":27,"code":"A001"}]},{"id":"tokyo-akiruno","region":"関東","pref":"東京都","city":"あきる野市","lat":35.7256,"lng":139.218,"place":"フレア五日市","address":"あきる野市舘谷台26番地1","hours":"9:00〜17:00","cards":[{"dan":28,"code":"C001"}]},{"id":"tokyo-ur","region":"関東","pref":"東京都","city":"UR都市機構","lat":35.779,"lng":139.7165,"place":"URまちとくらしのミュージアム","address":"北区赤羽台1-4-50","hours":"10:00〜17:00(水・日・祝休)","cards":[{"dan":27,"code":"B001"}]},{"id":"tokyo-toshizukuri","region":"関東","pref":"東京都","city":"東京都都市づくり公社","lat":35.6545,"lng":139.339,"place":"東京都都市づくり公社 下水道部(サザンスカイタワー八王子7階)","address":"八王子市子安町4-7-1","hours":"平日 9:00〜12:00、13:00〜16:00","subPlaces":[{"label":"土日祝","place":"コープみらい コープ高倉店","address":"八王子市高倉町49-3","hours":"10:00〜16:00"}],"cards":[{"dan":27,"code":"A001"}]},{"id":"kanagawa-hayama","region":"関東","pref":"神奈川県","city":"葉山町","lat":35.2767,"lng":139.603,"place":"南郷上ノ山公園","address":"三浦郡葉山町長柄1888-1","hours":"8:30〜16:30(6〜8月は8:00〜18:00 / 月曜休)","cards":[{"dan":28,"code":"C001"}]},{"id":"kanagawa-hayama-kanko","region":"関東","pref":"神奈川県","city":"葉山町","lat":35.28,"lng":139.593,"place":"葉山町観光協会(葉山ステーション内)","address":"三浦郡葉山町長柄1583-17","hours":"9:00〜17:00(水曜・年末年始休)","status":"休止","statusNote":"現在配布休止中の情報があります。訪問前に葉山町の公式情報を確認してください。","cards":[{"dan":27,"code":"B001"}]},{"id":"niigata-shibata","region":"北陸","pref":"新潟県","city":"新発田市","lat":37.9485,"lng":139.326,"place":"蔵春閣","address":"新発田市諏訪町1丁目9-20","hours":"9:00〜16:00(木曜・12/29〜1/3休)","cards":[{"dan":28,"code":"D001"}]},{"id":"niigata-sado","region":"北陸","pref":"新潟県","city":"佐渡市","lat":38.079,"lng":138.437,"place":"両津市民センター","address":"佐渡市両津湊198番地","hours":"8:30〜17:00","cards":[{"dan":28,"code":"H001"}]},{"id":"niigata-sado-sawata","region":"北陸","pref":"新潟県","city":"佐渡市","lat":38.0145,"lng":138.354,"place":"佐和田市民センター","address":"佐渡市河原田本町394番地","hours":"8:30〜17:00(年末年始休)","cards":[{"dan":27,"code":"G001"}]},{"id":"toyama-toyama","region":"北陸","pref":"富山県","city":"富山市","lat":36.696,"lng":137.2135,"place":"富山市役所 西館2階 上下水道局お客さまサービスステーション","address":"富山市新桜町7-38","hours":"平日 9:00〜16:00","subPlaces":[{"label":"土日祝","place":"富山市国際交流センター(CiCビル3階)","address":"富山市新富町一丁目2-3","hours":"10:00〜20:30"}],"cards":[{"dan":28,"code":"I001"}]},{"id":"ishikawa-anamizu","region":"北陸","pref":"石川県","city":"穴水町","lat":37.23,"lng":136.907,"place":"穴水町役場 会計課","address":"鳳珠郡穴水町字川島ラの174番地","hours":"8:30〜17:15","cards":[{"dan":28,"code":"B001"}]},{"id":"yamanashi-kofu","region":"北陸","pref":"山梨県","city":"甲府市","lat":35.6645,"lng":138.57,"place":"甲府市歴史文化交流施設 こうふ亀屋座","address":"甲府市丸の内1丁目11-5","hours":"10:00〜17:00(火曜休)","cards":[{"dan":27,"code":"C001"}]},{"id":"yamanashi-tsuru","region":"北陸","pref":"山梨県","city":"都留市","lat":35.5515,"lng":138.906,"place":"都留市役所 上下水道課","address":"都留市上谷1丁目1-1","hours":"平日 8:30〜17:15","subPlaces":[{"label":"土日祝","place":"道の駅つる","address":"都留市大原88","hours":"9:00〜17:30(12〜2月は〜17:00)"}],"status":"休止","statusNote":"在庫切れにより配布休止中の情報があります。訪問前に都留市の公式情報を確認してください。","cards":[{"dan":27,"code":"B001"}]},{"id":"nagano-ryuiki","region":"北陸","pref":"長野県","city":"長野県(流域下水道)","lat":36.694,"lng":138.28,"place":"クリーンピア千曲 管理本館","address":"長野市大字赤沼字申高2455","hours":"平日 9:00〜17:00(2階事務室) / 土日祝 9:00〜17:00(1階警備員室)","cards":[{"dan":27,"code":"E001"}]},{"id":"nagano-ueda","region":"北陸","pref":"長野県","city":"上田市","lat":36.403,"lng":138.245,"place":"上田市観光会館2階 観光案内所","address":"上田市大手2丁目8-4","hours":"9:00〜17:00(年末年始休)","cards":[{"dan":28,"code":"D001"}]},{"id":"nagano-nakano","region":"北陸","pref":"長野県","city":"中野市","lat":36.742,"lng":138.3695,"place":"中野市役所 建設水道部上下水道課(本庁舎3階)","address":"中野市三好町一丁目3-19","hours":"平日 8:30〜17:15(土日祝は日直窓口で配布)","cards":[{"dan":28,"code":"A001"}]},{"id":"gifu-tajimi","region":"中部","pref":"岐阜県","city":"多治見市","lat":35.3326,"lng":137.129,"place":"多治見市PRセンター(陶都創造館1階)","address":"多治見市本町5丁目9-1","hours":"10:00〜18:00(年末年始休)","status":"休止","statusNote":"現在配布休止中の情報があります。訪問前に多治見市の公式情報を確認してください。","cards":[{"dan":28,"code":"A001"}]},{"id":"shizuoka-susono","region":"中部","pref":"静岡県","city":"裾野市","lat":35.172,"lng":138.9,"place":"裾野市観光協会","address":"裾野市千福7-1","hours":"8:30〜17:00(10〜3月は〜16:00 / 年末年始休)","cards":[{"dan":27,"code":"A001"}]},{"id":"aichi-tokoname","region":"中部","pref":"愛知県","city":"常滑市","lat":34.8895,"lng":136.832,"place":"とこなめ観光案内所","address":"常滑市栄町3丁目8番地","hours":"9:00〜16:30(12/29〜1/2休)","cards":[{"dan":27,"code":"B001"}]},{"id":"aichi-nisshin","region":"中部","pref":"愛知県","city":"日進市","lat":35.132,"lng":137.06,"place":"にっしん観光まちづくり協会(道の駅マチテラス日進内)","address":"日進市本郷町前田33番地","hours":"10:00〜17:00(月曜・第2火曜・年末年始休)","status":"配布前","statusNote":"2026年6月24日から配布開始予定です。","cards":[{"dan":28,"code":"A001"}]},{"id":"aichi-miyoshi","region":"中部","pref":"愛知県","city":"みよし市","lat":35.064,"lng":137.077,"place":"みなよし交流センター","address":"みよし市明知町下細口1-8","hours":"火〜土 9:30〜20:30 / 日 9:30〜16:30(月曜休)","cards":[{"dan":28,"code":"C001"}]},{"id":"mie-matsusaka","region":"中部","pref":"三重県","city":"松阪市","lat":34.578,"lng":136.541,"place":"松阪駅観光情報センター","address":"松阪市京町507-2","hours":"9:00〜18:00(12/30〜1/2休)","cards":[{"dan":28,"code":"F001"}]},{"id":"shiga-otsu","region":"近畿","pref":"滋賀県","city":"大津市","lat":35.013,"lng":135.865,"place":"大津港サイクルステーション Bird Cafe","address":"大津市浜大津5-1-7","hours":"9:00〜17:00(冬季は休業・短縮営業あり。HP要確認)","cards":[{"dan":28,"code":"C001"}]},{"id":"shiga-koka","region":"近畿","pref":"滋賀県","city":"甲賀市","lat":34.969,"lng":136.169,"place":"甲賀市ひと・まち街道交流館","address":"甲賀市水口町八坂7-4","hours":"9:00〜17:00(月曜休)","cards":[{"dan":27,"code":"B001"}]},{"id":"shiga-higashiomi","region":"近畿","pref":"滋賀県","city":"東近江市","lat":35.065,"lng":136.148,"place":"東近江市 蒲生図書館(蒲生支所内)","address":"東近江市市子川原町676番地","hours":"10:00〜17:00(月・火曜、祝日、月末整理日休)","cards":[{"dan":27,"code":"C001"}]},{"id":"osaka-fujiidera","region":"近畿","pref":"大阪府","city":"藤井寺市","lat":34.578,"lng":135.597,"place":"アイセルシュラホール 1階ウエルカムラウンジ","address":"藤井寺市藤井寺3丁目1-20","hours":"火〜日 10:00〜17:00(月曜・年末年始休)","cards":[{"dan":28,"code":"C001"}]},{"id":"nara-kashihara","region":"近畿","pref":"奈良県","city":"橿原市","lat":34.509,"lng":135.793,"place":"橿原市観光交流センター「かしはらナビプラザ」1階","address":"橿原市内膳町1-6-8","hours":"9:00〜17:00(12/31〜1/3休)","cards":[{"dan":28,"code":"C001"}]},{"id":"wakayama-iwade","region":"近畿","pref":"和歌山県","city":"岩出市","lat":34.255,"lng":135.318,"place":"岩出市観光案内所","address":"岩出市清水386-11","hours":"9:00〜17:00(木曜・年末年始休)","cards":[{"dan":28,"code":"A001"}]},{"id":"tottori-misasa","region":"中国","pref":"鳥取県","city":"三朝町","lat":35.408,"lng":133.887,"place":"三朝温泉観光商工センター","address":"東伯郡三朝町三朝973-1","hours":"8:30〜17:30","status":"休止","statusNote":"現在配布休止中の情報があります。訪問前に三朝町の公式情報を確認してください。","cards":[{"dan":27,"code":"A001"}]},{"id":"hiroshima-akiota","region":"中国","pref":"広島県","city":"安芸太田町","lat":34.577,"lng":132.32,"place":"道の駅 来夢とごうち","address":"山県郡安芸太田町大字上殿632-2","hours":"10:00〜18:00(12〜6月の平日は〜17:00 / 火曜休)","cards":[{"dan":28,"code":"A001"}]},{"id":"yamaguchi-yamaguchi","region":"中国","pref":"山口県","city":"山口市","lat":34.029,"lng":131.448,"place":"道の駅あいお","address":"山口市秋穂東1520-4","hours":"9:00〜18:00(第2・第4水曜休)","subPlaces":[{"label":"道の駅休業日","place":"山口市上下水道局下水道整備課","address":"山口市宮島町7-1","hours":"9:00〜17:00(開庁日のみ)"}],"cards":[{"dan":28,"code":"E001"}]},{"id":"yamaguchi-kudamatsu","region":"中国","pref":"山口県","city":"下松市","lat":34.023,"lng":131.853,"place":"下松スポーツ公園体育館 管理事務所","address":"下松市大字河内字恋路10140","hours":"9:00〜17:00(12/29〜1/3休)","cards":[{"dan":28,"code":"C001"}]},{"id":"yamaguchi-iwakuni","region":"中国","pref":"山口県","city":"岩国市","lat":34.043,"lng":132.27,"place":"潮風公園みなとオアシスゆう","address":"岩国市由宇町8500-6","hours":"9:30〜17:00(水曜・年末年始休)","cards":[{"dan":28,"code":"C001"}]},{"id":"tokushima-kitajima","region":"四国","pref":"徳島県","city":"北島町","lat":34.126,"lng":134.548,"place":"北島町役場 上下水道課","address":"板野郡北島町中村字上地23-1","hours":"平日 8:30〜17:15","subPlaces":[{"label":"土日","place":"北島町立図書館・創世ホール","address":"北島町新喜来字南古田91","hours":"10:00〜18:00"}],"cards":[{"dan":28,"code":"A001"}]},{"id":"kagawa-sakaide","region":"四国","pref":"香川県","city":"坂出市","lat":34.323,"lng":133.823,"place":"坂出市塩業資料館","address":"坂出市大屋冨町1777-12","hours":"9:00〜17:00(月曜・祝日翌日休)","subPlaces":[{"label":"閉館日","place":"坂出市観光案内所(JR坂出駅構内)","address":"坂出市元町1-1-1","hours":"8:45〜17:30"}],"cards":[{"dan":28,"code":"B001"}]},{"id":"ehime-seiyo","region":"四国","pref":"愛媛県","city":"西予市","lat":33.366,"lng":132.655,"place":"乙亥会館","address":"西予市野村町野村12号10番地","hours":"9:00〜17:00(12/29〜1/3休)","cards":[{"dan":28,"code":"D001"}]},{"id":"kochi-kami","region":"四国","pref":"高知県","city":"香美市","lat":33.601,"lng":133.731,"place":"道の駅美良布(韮生の里 美良布直販店)","address":"香美市香北町美良布1211","hours":"3〜11月 7:00〜17:30 / 12〜2月 7:30〜17:00","cards":[{"dan":28,"code":"D001"}]},{"id":"kochi-kami-okumonobe","region":"四国","pref":"高知県","city":"香美市","lat":33.705,"lng":133.868,"place":"奥物部ふるさと物産館","address":"香美市物部町大栃872-2","hours":"9:00〜17:00(水曜・年末年始休)","cards":[{"dan":27,"code":"C001"}]},{"id":"fukuoka-ryuiki","region":"九州","pref":"福岡県","city":"福岡県(流域下水道)","lat":33.6064,"lng":130.4183,"place":"福岡県庁 1階総合案内窓口","address":"福岡市博多区東公園7-7","hours":"平日 8:30〜17:45","subPlaces":[{"label":"休日","place":"御笠川浄化センター","address":"福岡市博多区那珂4-5-1","hours":"10:00〜15:00"}],"cards":[{"dan":28,"code":"B001"}]},{"id":"fukuoka-nakagawa","region":"九州","pref":"福岡県","city":"那珂川市","lat":33.4995,"lng":130.422,"place":"那珂川市役所 下水道課","address":"那珂川市大字安徳702番地1","hours":"平日 8:30〜17:00","subPlaces":[{"label":"土日祝","place":"ナカイチインフォメーション(博多南駅前ビル1F)","address":"那珂川市中原2丁目120","hours":"10:00〜18:00"}],"status":"休止","statusNote":"現在配布休止中の情報があります。訪問前に那珂川市の公式情報を確認してください。","cards":[{"dan":27,"code":"B001"}]},{"id":"saga-tosu","region":"九州","pref":"佐賀県","city":"鳥栖市","lat":33.369,"lng":130.4884,"place":"新鳥栖駅観光案内所","address":"鳥栖市原古賀町220-2","hours":"9:00〜18:00","cards":[{"dan":28,"code":"A001"}]},{"id":"nagasaki-higashisonogi","region":"九州","pref":"長崎県","city":"東彼杵町","lat":33.039,"lng":129.907,"place":"東彼杵町役場 水道課","address":"東彼杵郡東彼杵町蔵本郷1850-6","hours":"平日 9:00〜16:30(年末年始休)","subPlaces":[{"label":"土日祝","place":"東彼杵町観光案内所(道の駅彼杵の荘)","address":"東彼杵町彼杵宿郷747-2","hours":"9:00〜17:00"}],"cards":[{"dan":27,"code":"A001"}]},{"id":"kumamoto-kumamoto","region":"九州","pref":"熊本県","city":"熊本市","lat":32.794,"lng":130.746,"place":"水前寺競技場 事務所","address":"熊本市中央区水前寺5丁目23-3","hours":"8:30〜18:00","cards":[{"dan":28,"code":"L001"}]},{"id":"kumamoto-kumamoto-hanabata","region":"九州","pref":"熊本県","city":"熊本市","lat":32.8005,"lng":130.706,"place":"花畑広場サービス棟","address":"熊本市中央区花畑町7-7","hours":"10:00〜18:00(12/31〜1/4休)","cards":[{"dan":27,"code":"K001"}]},{"id":"oita-bungotakada","region":"九州","pref":"大分県","city":"豊後高田市","lat":33.5565,"lng":131.445,"place":"「豊後高田昭和の町」観光案内所(昭和ロマン蔵内)","address":"豊後高田市新町989-1","hours":"平日 10:00〜17:00 / 土日祝 9:00〜17:00","cards":[{"dan":28,"code":"A001"}]},{"id":"okinawa-uruma","region":"九州","pref":"沖縄県","city":"うるま市","lat":26.376,"lng":127.848,"place":"うるま市水道部 下水道課","address":"うるま市字兼箇段896番地","hours":"平日 9:00〜17:00","subPlaces":[{"label":"土日祝","place":"あまわりパーク観光ターミナル","address":"うるま市勝連南風原3807-2","hours":"9:00〜17:30"}],"cards":[{"dan":27,"code":"A001"}]}]};
+
+/* 地域カラー(GKPのカードが9地域で色分けされているのに倣う) */
+const REGION_COLOR = {
+  "北海道":"#7048E8", "東北":"#1971C2", "関東":"#E64980",
+  "北陸":"#0CA678", "中部":"#F59F00", "近畿":"#E8590C",
+  "中国":"#C92A2A", "四国":"#74B816", "九州":"#3B5BDB",
+};
+
+/* ── データ読み込み(キャッシュ済みの更新データ > 内蔵データ) ── */
+const DATA_CACHE_KEY = 'mhc-data-cache-v1';
+let DATA = BUNDLED_DATA;
+try{
+  const cached = localStorage.getItem(DATA_CACHE_KEY);
+  if(cached){
+    const d = JSON.parse(cached);
+    if(d && Array.isArray(d.spots) && d.spots.length) DATA = d;
+  }
+}catch(e){}
+
+let SPOTS = [];
+let ALL_CARDS = [];
+const cardKey = (spot, card) => `${spot.id}__${card.dan}-${card.code}`;
+
+function applyData(d){
+  DATA = d;
+  SPOTS = d.spots;
+  ALL_CARDS = SPOTS.flatMap(s => s.cards.map(c => cardKey(s, c)));
+}
+applyData(DATA);
+
+/* ── 取得済みデータの保存(ブラウザ内に永続化) ── */
+const STORE_KEY = 'mhc-collected-v2';
+let collected = new Set();
+try{
+  const saved = localStorage.getItem(STORE_KEY);
+  if(saved) collected = new Set(JSON.parse(saved));
+}catch(e){}
+function persist(){
+  try{ localStorage.setItem(STORE_KEY, JSON.stringify([...collected])); }catch(e){}
+}
+const spotAllGot = s => s.cards.every(c => collected.has(cardKey(s,c)));
+const spotAnyTodo = s => s.cards.some(c => !collected.has(cardKey(s,c)));
+
+/* ── 地図初期化(国土地理院 淡色タイル) ── */
+const map = L.map('map', {zoomControl:true}).setView([36.5, 137.8], 5);
+L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/pale/{z}/{x}/{y}.png', {
+  attribution:'地図: <a href="https://maps.gsi.go.jp/development/ichiran.html">国土地理院</a>',
+  maxZoom:18,
+}).addTo(map);
+
+/* ── ピン生成 ── */
+function makeIcon(spot, i){
+  const got = spotAllGot(spot);
+  const color = REGION_COLOR[spot.region] || '#C9A227';
+  const warn = spot.status ? `<span class="pin-badge badge-warn">!</span>` : '';
+  const multi = spot.cards.length > 1 ? `<span class="pin-multi">×${spot.cards.length}</span>` : '';
+  return L.divIcon({
+    className:'',
+    html:`<div class="mh-pin ${got?'collected':''}" style="--c:${color};animation-delay:${Math.min(i*25,800)}ms">
+            <span class="pin-badge badge-got">✓</span>${warn}${multi}
+          </div>`,
+    iconSize:[34,34], iconAnchor:[17,17],
+  });
+}
+
+const cluster = L.markerClusterGroup({
+  showCoverageOnHover:false,
+  maxClusterRadius:48,
+  iconCreateFunction: c => L.divIcon({
+    className:'', iconSize:[44,44],
+    html:`<div class="mh-cluster">${c.getChildCount()}</div>`,
+  }),
+});
+map.addLayer(cluster);
+
+/* ── 状態 ── */
+let query = '';
+let mode = 'all';
+let markers = [];
+let activeMarker = null;
+
+function spotSearchText(s){
+  const dans = s.cards.map(c=>`第${c.dan}弾 ${c.dan}弾 ${c.dan}`).join(' ');
+  return `${s.city} ${s.pref} ${s.place} ${s.region} ${dans}`;
+}
+
+function visibleSpots(){
+  return SPOTS.filter(s=>{
+    if(query && !spotSearchText(s).includes(query)) return false;
+    if(mode==='todo' && !spotAnyTodo(s)) return false;
+    if(mode==='got' && !spotAllGot(s)) return false;
+    return true;
+  });
+}
+
+function rebuild({fly=false}={}){
+  const list = visibleSpots();
+  cluster.clearLayers();
+  markers = list.map((s,i)=>{
+    const m = L.marker([s.lat, s.lng], {icon:makeIcon(s,i)});
+    m.spot = s;
+    m.on('click', ()=> selectSpot(m));
+    return m;
+  });
+  cluster.addLayers(markers);
+  updateProgress();
+  if(fly && list.length){
+    const b = L.latLngBounds(list.map(s=>[s.lat,s.lng]));
+    map.flyToBounds(b, {padding:[70,70], duration:.9, maxZoom:11});
+  }
+  return list;
+}
+
+function updateProgress(){
+  const got = ALL_CARDS.filter(k => collected.has(k)).length;
+  document.getElementById('gotNum').textContent = got;
+  document.getElementById('totalNum').textContent = ALL_CARDS.length;
+  document.getElementById('progressBar').style.width =
+    ALL_CARDS.length ? (got/ALL_CARDS.length*100)+'%' : '0%';
+}
+
+/* ── 詳細シート ── */
+const sheet = document.getElementById('sheet');
+const sheetBody = document.getElementById('sheetBody');
+
+function selectSpot(marker){
+  const s = marker.spot;
+  if(activeMarker){
+    activeMarker.getElement()?.querySelector('.mh-pin')?.classList.remove('active');
+  }
+  marker.getElement()?.querySelector('.mh-pin')?.classList.add('active');
+  activeMarker = marker;
+
+  renderSheet(s);
+  sheet.classList.add('open');
+  sheet.setAttribute('aria-hidden','false');
+
+  const isMobile = matchMedia('(max-width:767px)').matches;
+  map.flyTo([s.lat - (isMobile? 0.012:0), s.lng], Math.max(map.getZoom(), 12), {duration:1.1, easeLinearity:.22});
+}
+
+function renderSheet(s){
+  const color = REGION_COLOR[s.region] || '#C9A227';
+  const statusHtml = s.status
+    ? `<div class="status-banner">⚠️ ${s.status==='休止' ? '配布休止中' : '配布開始前'} — ${s.statusNote||''}</div>` : '';
+
+  const cardsHtml = s.cards.map(c=>{
+    const key = cardKey(s,c);
+    const got = collected.has(key);
+    return `
+      <div class="card-row ${got?'got':''}">
+        <div class="mini-lid" style="--c:${color}"></div>
+        <div class="card-meta">
+          <div class="dan">第${c.dan}弾</div>
+          <div class="code">${c.code}</div>
+        </div>
+        <button class="get-btn ${got?'on':''}" data-key="${key}">${got?'✓ GET!':'取得した'}</button>
+      </div>`;
+  }).join('');
+
+  const subHtml = (s.subPlaces||[]).map(p=>`
+    <div class="sub-place">
+      <b>【${p.label}】${p.place}</b><br>${p.address}<br>${p.hours}
+    </div>`).join('');
+
+  sheetBody.innerHTML = `
+    <div class="card-head" style="--c:${color}">
+      <div class="card-title">
+        <h2>${s.city}</h2>
+        <span class="pref-badge">${s.pref} / ${s.region}</span>
+      </div>
+    </div>
+    ${statusHtml}
+    <div class="cards-list">${cardsHtml}</div>
+    <dl class="info">
+      <dt>配布場所</dt><dd>${s.place}<span class="addr">${s.address}</span></dd>
+      <dt>配布時間</dt><dd>${s.hours}</dd>
+    </dl>
+    ${subHtml}
+    ${s.note ? `<p class="note">📝 ${s.note}</p>` : ''}
+    <div class="actions">
+      <a class="btn btn-primary" target="_blank" rel="noopener"
+         href="https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(s.place.replace(/（.*?）|\(.*?\)/g,'') + ' ' + s.address)}">経路を調べる</a>
+      <button class="btn btn-ghost" onclick="closeSheet()">閉じる</button>
+    </div>
+    <p class="geo-note">※ピンの位置は目安です。正確な場所は「経路を調べる」から確認してください。配布場所・時間・休止状況は変更されることがあるため、訪問前に各自治体の公式情報の確認をおすすめします。(データ: ${DATA.version||'-'}時点)</p>`;
+
+  sheetBody.querySelectorAll('.get-btn').forEach(btn=>{
+    btn.addEventListener('click', ()=> toggleCard(s, btn.dataset.key));
+  });
+}
+
+function toggleCard(s, key){
+  const nowGot = !collected.has(key);
+  if(nowGot) collected.add(key); else collected.delete(key);
+  persist();
+  renderSheet(s);
+
+  const el = activeMarker?.getElement()?.querySelector('.mh-pin');
+  if(el) el.classList.toggle('collected', spotAllGot(s));
+  updateProgress();
+
+  if(nowGot) showToast(`${s.city} のカードを取得済みにしました 🎉`);
+  if(mode!=='all'){
+    setTimeout(()=>{ if(!sheet.classList.contains('open')) rebuild(); }, 400);
+  }
+}
+
+function closeSheet(){
+  sheet.classList.remove('open');
+  sheet.setAttribute('aria-hidden','true');
+  if(activeMarker){
+    activeMarker.getElement()?.querySelector('.mh-pin')?.classList.remove('active');
+    activeMarker = null;
+  }
+  if(mode!=='all') rebuild();
+}
+document.getElementById('sheetClose').addEventListener('click', closeSheet);
+map.on('click', closeSheet);
+
+/* ── トースト ── */
+const toast = document.getElementById('toast');
+let toastTimer;
+function showToast(msg, ms=2400){
+  toast.textContent = msg;
+  toast.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(()=>toast.classList.remove('show'), ms);
+}
+
+/* ── データ更新 ── */
+const refreshBtn = document.getElementById('refreshBtn');
+
+async function fetchLatest({silent=false}={}){
+  if(!DATA_URL){
+    if(!silent) showToast('更新用URLが未設定です。HTML内の DATA_URL に manhole-data.json の公開URLを設定してください。', 4200);
+    return;
+  }
+  refreshBtn.classList.add('loading');
+  refreshBtn.disabled = true;
+  try{
+    const res = await fetch(DATA_URL + (DATA_URL.includes('?')?'&':'?') + 't=' + Date.now(), {cache:'no-store'});
+    if(!res.ok) throw new Error('HTTP ' + res.status);
+    const d = await res.json();
+    if(!d || !Array.isArray(d.spots) || !d.spots.length) throw new Error('データ形式が不正です');
+    const changed = d.version !== DATA.version || d.spots.length !== SPOTS.length;
+    try{ localStorage.setItem(DATA_CACHE_KEY, JSON.stringify(d)); }catch(e){}
+    applyData(d);
+    closeSheet();
+    rebuild();
+    if(!silent) showToast(`データを更新しました(${d.version||'最新版'} / ${ALL_CARDS.length}種)`);
+    else if(changed) showToast(`配布データを${d.version||'最新版'}に更新しました`);
+  }catch(err){
+    /* オフラインや取得失敗時は、手元のデータ(キャッシュ/内蔵)のままで動く */
+    if(!silent) showToast('更新に失敗しました。通信環境とDATA_URLを確認してください。', 3600);
+  }finally{
+    refreshBtn.classList.remove('loading');
+    refreshBtn.disabled = false;
+  }
+}
+refreshBtn.addEventListener('click', ()=> fetchLatest());
+
+/* ── 現在地 ── */
+let meMarker = null;
+function distKm(aLat,aLng,bLat,bLng){
+  const R=6371, rad=x=>x*Math.PI/180;
+  const dLat=rad(bLat-aLat), dLng=rad(bLng-aLng);
+  const h=Math.sin(dLat/2)**2 + Math.cos(rad(aLat))*Math.cos(rad(bLat))*Math.sin(dLng/2)**2;
+  return 2*R*Math.asin(Math.sqrt(h));
+}
+document.getElementById('locateBtn').addEventListener('click', ()=>{
+  if(!navigator.geolocation){
+    showToast('この端末では位置情報を利用できません');
+    return;
+  }
+  showToast('現在地を取得しています…');
+  navigator.geolocation.getCurrentPosition(pos=>{
+    const {latitude:lat, longitude:lng} = pos.coords;
+    if(meMarker) meMarker.remove();
+    meMarker = L.marker([lat,lng], {
+      icon:L.divIcon({className:'', html:'<div class="me-dot"></div>', iconSize:[18,18], iconAnchor:[9,9]}),
+      zIndexOffset:1000, interactive:false,
+    }).addTo(map);
+    map.flyTo([lat,lng], 11, {duration:1.1});
+
+    /* 一番近い「未取得・配布中」の場所を案内 */
+    const candidates = SPOTS.filter(s => spotAnyTodo(s) && !s.status);
+    if(candidates.length){
+      const nearest = candidates.reduce((a,b)=>
+        distKm(lat,lng,a.lat,a.lng) <= distKm(lat,lng,b.lat,b.lng) ? a : b);
+      const d = distKm(lat,lng,nearest.lat,nearest.lng);
+      showToast(`いちばん近い未取得: ${nearest.city}「${nearest.place}」(約${d<10?d.toFixed(1):Math.round(d)}km)`, 4200);
+    }
+  }, err=>{
+    showToast('現在地を取得できませんでした。位置情報の許可を確認してください。', 3600);
+  }, {enableHighAccuracy:true, timeout:10000});
+});
+
+/* ── 検索 ── */
+document.getElementById('q').addEventListener('input', e=>{
+  query = e.target.value.trim();
+  closeSheet();
+  const list = rebuild({fly: !!query});
+  if(query && list.length===0) showToast(`「${query}」に一致する配布場所はありません`);
+});
+
+/* ── フィルターチップ ── */
+document.querySelectorAll('.fchip[data-f]').forEach(btn=>{
+  btn.addEventListener('click', ()=>{
+    document.querySelectorAll('.fchip[data-f]').forEach(b=>b.classList.remove('on'));
+    btn.classList.add('on');
+    mode = btn.dataset.f;
+    closeSheet();
+    const list = rebuild();
+    if(list.length===0){
+      showToast(mode==='got' ? 'まだ取得済みのカードがありません' : 'すべて取得済みです!おめでとうございます 🎉');
+    }
+  });
+});
+
+/* 初期表示 */
+rebuild();
+if(AUTO_UPDATE_ON_LOAD && location.protocol !== 'file:') fetchLatest({silent:true});
+</script>
+</body>
+</html>
