@@ -315,6 +315,29 @@
   }
   .toast.show{transform:translate(-50%,0);opacity:1}
 
+  /* ── 新弾お知らせバナー ── */
+  .notice{
+    position:fixed;z-index:1150;left:12px;right:12px;
+    bottom:calc(16px + env(safe-area-inset-bottom));
+    display:flex;align-items:center;gap:10px;
+    background:#FFF8E8;border:2px solid var(--brass);color:#6B5200;
+    border-radius:14px;padding:11px 14px;box-shadow:var(--shadow);
+    font-size:12.5px;font-weight:700;line-height:1.55;
+    transform:translateY(140%);opacity:0;
+    transition:transform .5s var(--ease-spring), opacity .4s;
+  }
+  .notice.show{transform:translateY(0);opacity:1}
+  .notice .n-ico{font-size:18px;flex-shrink:0}
+  .notice .n-body{flex:1}
+  .notice .n-body small{display:block;font-weight:500;font-size:10.5px;color:#9A7B00;margin-top:2px}
+  .notice .n-close{
+    flex-shrink:0;border:none;background:transparent;color:#6B5200;
+    font-size:16px;cursor:pointer;padding:4px;line-height:1;
+  }
+  @media (min-width:768px){
+    .notice{left:auto;right:20px;max-width:380px}
+  }
+
   @media (prefers-reduced-motion:reduce){
     *{animation:none!important;transition:none!important}
   }
@@ -356,6 +379,12 @@
 </aside>
 
 <div class="toast" id="toast"></div>
+
+<div class="notice" id="notice" role="status">
+  <span class="n-ico">🆕</span>
+  <span class="n-body" id="noticeBody"></span>
+  <button class="n-close" id="noticeClose" aria-label="閉じる">✕</button>
+</div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/leaflet.markercluster.js"></script>
@@ -618,13 +647,26 @@ async function fetchLatest({silent=false}={}){
     if(!res.ok) throw new Error('HTTP ' + res.status);
     const d = await res.json();
     if(!d || !Array.isArray(d.spots) || !d.spots.length) throw new Error('データ形式が不正です');
+    const beforeDans = new Set(SPOTS.flatMap(s=>s.cards.map(c=>c.dan)));
+    const beforeCount = ALL_CARDS.length;
     const changed = d.version !== DATA.version || d.spots.length !== SPOTS.length;
     try{ localStorage.setItem(DATA_CACHE_KEY, JSON.stringify(d)); }catch(e){}
     applyData(d);
     closeSheet();
     rebuild();
-    if(!silent) showToast(`データを更新しました(${d.version||'最新版'} / ${ALL_CARDS.length}種)`);
-    else if(changed) showToast(`配布データを${d.version||'最新版'}に更新しました`);
+    const addedDans = [...new Set(SPOTS.flatMap(s=>s.cards.map(c=>c.dan)))]
+      .filter(n=>!beforeDans.has(n)).sort((a,b)=>a-b);
+    let msg;
+    if(addedDans.length){
+      msg = `第${addedDans.join('・')}弾(+${ALL_CARDS.length-beforeCount}種)が追加されました!全${ALL_CARDS.length}種`;
+    }else if(changed){
+      msg = `配布データを${d.version||'最新版'}に更新しました(全${ALL_CARDS.length}種)`;
+    }else{
+      msg = `データは最新です(${d.version||'-'} / 全${ALL_CARDS.length}種)`;
+    }
+    if(!silent) showToast(msg, 3600);
+    else if(changed) showToast(msg, 3600);
+    checkNewDan();
   }catch(err){
     /* オフラインや取得失敗時は、手元のデータ(キャッシュ/内蔵)のままで動く */
     if(!silent) showToast('更新に失敗しました。通信環境とDATA_URLを確認してください。', 3600);
@@ -634,6 +676,33 @@ async function fetchLatest({silent=false}={}){
   }
 }
 refreshBtn.addEventListener('click', ()=> fetchLatest());
+
+/* ── 新弾チェック ──
+   GitHub Actionsが週1回GKP公式を確認して latest-info.json に
+   最新の弾番号を記録する。ここではそれと手元データを比較して、
+   未収録の弾があればお知らせバナーを出す。 */
+const notice = document.getElementById('notice');
+const noticeBody = document.getElementById('noticeBody');
+document.getElementById('noticeClose').addEventListener('click', ()=> notice.classList.remove('show'));
+
+const maxDan = () => Math.max(0, ...SPOTS.flatMap(s=>s.cards.map(c=>c.dan)));
+
+async function checkNewDan(){
+  try{
+    const res = await fetch('./latest-info.json?t=' + Date.now(), {cache:'no-store'});
+    if(!res.ok) return;
+    const info = await res.json();
+    const have = maxDan();
+    if(info && Number.isFinite(info.latestDan) && info.latestDan > have){
+      noticeBody.innerHTML =
+        `<b>第${info.latestDan}弾が発表されています!</b>` +
+        `<small>このマップは第${have}弾まで収録。データ更新をお待ちください(${info.checkedAt||''}確認)</small>`;
+      notice.classList.add('show');
+    }else{
+      notice.classList.remove('show');
+    }
+  }catch(e){ /* 未設置・取得失敗時は何もしない */ }
+}
 
 /* ── 現在地 ── */
 let meMarker = null;
@@ -695,7 +764,11 @@ document.querySelectorAll('.fchip[data-f]').forEach(btn=>{
 
 /* 初期表示 */
 rebuild();
-if(AUTO_UPDATE_ON_LOAD && location.protocol !== 'file:') fetchLatest({silent:true});
+if(AUTO_UPDATE_ON_LOAD && location.protocol !== 'file:'){
+  fetchLatest({silent:true}); // 完了時に checkNewDan() も呼ばれる
+}else if(location.protocol !== 'file:'){
+  checkNewDan();
+}
 </script>
 </body>
 </html>
